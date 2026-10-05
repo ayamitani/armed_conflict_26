@@ -1,0 +1,84 @@
+---
+title: "Week 3 In-class Assignment"
+author: "CHL5233: Statistical Programming and Computation in Health Data"
+format: pdf
+---
+
+In this assignment, we will build on the GitHub repo `armed_conflict` that includes data that will be used to create the analytical data set for the armed conflict paper. Use version control to perform the following tasks. 
+
+The folder `data` contains a sub-folder named `original`. Inside you will see 7 csv files:
+
+1. `maternal_mortality.csv`: contains maternal mortality data from years 1960 to 2021 for 186 countries in the paper. Source: [World Bank](https://data.worldbank.org/indicator/SH.STA.MMRT)
+2. `infant_mortality.csv`: contains infant mortality data from years 1960 to 2021 for 186 countries in the paper. Source: [World Bank](https://data.worldbank.org/indicator/SH.STA.MMRT)
+3. `neonatal_mortality.csv`: contains neonatal mortality data from years 1960 to 2021 for 186 countries in the paper. Source: [World Bank](https://data.worldbank.org/indicator/SH.STA.MMRT)
+4. `under5_mortality.csv`: contains under 5 mortality data from years 1960 to 2021 for 186 countries in the paper. Source: [World Bank](https://data.worldbank.org/indicator/SH.STA.MMRT)
+5. `conflict.csv`: contains number of deaths by year, country, and conflict ID. Source: [Uppsala Conflict Data Program](https://ucdp.uu.se/downloads/index.html#battlerelated)
+6. `disaster.csv`: List of natural disasters. Source: [International Disaster Database](https://public.emdat.be/)
+7. `covariates.csv`: Pre-processed data set that includes all other covariates.
+8. `countries.txt`: List of countries used in analysis (same as last week)
+9. `regions.txt`: Regions for the countries (same as last week)
+
+We will continue to use this repository to perform the exploratory data analysis, regression analysis, data visualization. Therefore, it's important to **create** and **maintain** an organized repository. At the end of this class, each repository should contain the following folders and sub-folders (the naming of the files do not need to match exactly but they should be **meaningful**.)
+
+```text
+- `data`
+  - `raw`
+    - includes all original data
+  - `processed`
+    - `final_data.txt` or `final_data.csv`
+- `scripts`
+  - `create_final_data.R`
+- `reports`
+```
+
+Using the steps below, write an **R script** that performs the following steps to create a final data set that will be used for analysis. 
+
+
+## Prepare World Bank data
+
+Take a look at the data sets that were obtained from the World Bank: `maternal_mortality.csv`, `infant_mortality.csv`, `neonatal_mortality.csv`, `under5_mortality.csv`. Notice that they all have the same structure. 
+
+1. First, read in `maternal_mortality.csv` and perform the following tasks.
+
+    a. The data set is currently in a **wide** format. The code `prepare_mortality.R` uses the `pivot_longer()` function in the `dplyr` package to convert the data set into a **long** format. 
+  
+    b. We want to repeat the same data manipulation step to each of the WB data. Turn the code into a **function** that performs the manipulation to a data set and apply the function to each of `maternal_mortality.csv`, `infant_mortality.csv`, `neonatal_mortality.csv`, and `under5_mortality.csv`.  
+
+
+## Prepare disaster data
+
+1. Read in `disaster.csv` and perform the following tasks.
+
+    a. Use the `clean_names()` function from the `janitor` package to clean the variable names. This is a super useful function that will clean up variable names and make them easier to work with. For example, it will convert `Disaster Type` to `disaster_type`.
+    b. Use the `dplyr::filter()` function to subset the data set to only include years 2000--2019 and the disaster types "Earthquake" and "Drought"
+    c. Subset the data set to only include the following variables: `year`, `iso`, `disaster_type`.
+    d. Create a **dummy variable** `drought` and another dummy variable `earthquake` such that each country has an indicator of whether it had a drought or earthquake in that year. For example, if a country had a drought in 2001, the variable `drought` would be equal to 1 for that country and year. If the country did not have a drought in 2001, the variable `drought` would be equal to 0 for that country and year. The same applies to the earthquake variable.
+    e. Retain the following variables: `year`, `iso`, `earthquake`, `drought`.   
+
+## Prepare conflict data
+
+1. Read in `conflict.csv`. This data set has already been pre-processed and only contains relevant variables and years of observations to create the binary armed conflict variable. The data set includes the following variables:
+
+| Variable name | Description |
+|--|------|
+| `conflict_id`      | Identifier for each conflict   |
+| `iso`     | ISO-3 country code   |
+| `year`       | Year of the conflict    |
+| `best`       | Best estimate for total number of battle related deaths     |
+
+2. Derive the binary armed conflict variable that was used as the primary exposure in the paper.
+    
+    a. Some countries have multiple conflicts per year, but we want the final data to only include the indicator of whether the country had a conflict that year, **based on the definition used in the paper**. 
+    b. Remember that the armed conflict variable was **lagged by a year** in the analysis. 
+
+## Merge all data
+
+1. Finally, merge all data sets and place the final data set into a new sub-folder `data/processed`. 
+
+## Compare data with coding agent
+
+1. Ask the coding agent to perform the above tasks in a seprate script (be careful not to overwrite your original script!). Be specific about the expected output and compare the final data set with the data set generated by the coding agent. If you find differences, review the code and identify the differences. Decide which code is correct, more efficient and why.
+
+## Pull + Commit + Push
+
+1. When you are ready, push the new R script and final data set to the GitHub repository. 
