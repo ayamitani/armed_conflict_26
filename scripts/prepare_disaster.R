@@ -1,4 +1,5 @@
 library(janitor)
+library(tidyverse)
 
 disaster <- read.csv("./data/raw/disaster.csv", header = TRUE)
 

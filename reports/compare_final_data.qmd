@@ -1,0 +1,316 @@
+---
+title: "Comparing the Final Data Sets"
+subtitle: "Original and Copilot-generated workflows"
+format:
+  html:
+    toc: true
+    code-fold: true
+    df-print: paged
+execute:
+  warning: false
+  message: false
+---
+
+## Purpose
+
+This report compares the outputs of `scripts/create_final_data.R` and
+`scripts/create_final_data_copilot.R`. It reads the already-generated CSV files;
+it does not rerun either data-creation script. The comparison covers dataset
+size, schema, country-year keys, and values in variables shared by both files.
+After changing either creation script, rerun it to refresh its CSV before
+rendering this report.
+
+The original workflow writes `data/processed/final_data.csv`; the Copilot
+workflow writes `data/processed/final_data_copilot.csv`.
+
+## Load the outputs
+
+```{r}
+library(tidyverse)
+library(knitr)
+
+original <- read_csv(
+	"../data/processed/final_data.csv",
+	show_col_types = FALSE
+)
+
+copilot <- read_csv(
+	"../data/processed/final_data_copilot.csv",
+	show_col_types = FALSE
+)
+
+key <- c("iso", "year")
+```
+
+## Dataset size and key integrity
+
+Both outputs currently contain one row per country-year. The table below
+recalculates the dimensions and duplicate-key counts from the files at render
+time.
+
+```{r}
+dataset_overview <- tribble(
+	~dataset, ~rows, ~columns, ~duplicate_country_year_keys,
+	"Original", nrow(original), ncol(original),
+	original |> count(across(all_of(key))) |> filter(n > 1) |> nrow(),
+	"Copilot", nrow(copilot), ncol(copilot),
+	copilot |> count(across(all_of(key))) |> filter(n > 1) |> nrow()
+)
+
+kable(dataset_overview, caption = "Dimensions and key uniqueness")
+```
+
+Compare the distinct country-year keys to identify records that occur in only
+one output.
+
+```{r}
+original_keys <- original |> distinct(across(all_of(key)))
+copilot_keys <- copilot |> distinct(across(all_of(key)))
+
+key_comparison <- bind_rows(
+	anti_join(original_keys, copilot_keys, by = key) |>
+		mutate(present_in = "Original only"),
+	anti_join(copilot_keys, original_keys, by = key) |>
+		mutate(present_in = "Copilot only")
+) |>
+	count(present_in, name = "country_years")
+
+if (nrow(key_comparison) == 0) {
+	tibble(result = "The two outputs contain the same country-year keys.")
+} else {
+	key_comparison
+}
+```
+
+## Column names and types
+
+Columns are classified as shared, exclusive to one output, or shared with a
+different inferred data type.
+
+```{r}
+original_types <- map_chr(original, ~ paste(class(.x), collapse = "/"))
+copilot_types <- map_chr(copilot, ~ paste(class(.x), collapse = "/"))
+
+schema_comparison <- tibble(
+	variable = union(names(original), names(copilot)),
+	original_type = original_types[variable],
+	copilot_type = copilot_types[variable]
+) |>
+	mutate(
+		status = case_when(
+			is.na(original_type) ~ "Copilot only",
+			is.na(copilot_type) ~ "Original only",
+			original_type != copilot_type ~ "Type differs",
+			TRUE ~ "Shared"
+		)
+	)
+
+schema_comparison |> count(status, name = "columns")
+```
+
+```{r}
+schema_comparison |>
+	filter(status != "Shared") |>
+	arrange(status, variable)
+```
+
+## Compare values in corresponding columns
+
+The comparison aligns records by `iso` and `year`. In addition to columns with
+the same name, it pairs renamed measures with their likely counterparts:
+original `armed_conflict` with Copilot `armed_conflict_lag1`, and original
+`drought`/`earthquake` with Copilot `disaster_drought`/`disaster_earthquake`.
+The directly named `armed_conflict` columns are also compared. The comparison
+is meaningful when both files have unique country-year keys; duplicate-key
+counts above flag when that assumption does not hold. Missing values are
+treated as differences when they occur in only one file.
+
+```{r}
+comparison_pairs <- tibble(
+	original_variable = intersect(names(original), names(copilot)),
+	copilot_variable = intersect(names(original), names(copilot))
+) |>
+	filter(!original_variable %in% key) |>
+	bind_rows(
+		tribble(
+			~original_variable, ~copilot_variable,
+			"armed_conflict", "armed_conflict_lag1",
+			"drought", "disaster_drought",
+			"earthquake", "disaster_earthquake"
+		) |>
+			filter(
+				original_variable %in% names(original),
+				copilot_variable %in% names(copilot)
+			)
+	) |>
+	mutate(
+		comparison = if_else(
+			original_variable == copilot_variable,
+			original_variable,
+			paste(original_variable, "vs", copilot_variable)
+		)
+	)
+
+value_differences <- tibble(
+	iso = character(),
+	year = integer(),
+	comparison = character(),
+	original_value = character(),
+	copilot_value = character()
+)
+value_comparison_run <- FALSE
+
+if (anyDuplicated(original[key]) == 0 && anyDuplicated(copilot[key]) == 0) {
+	value_comparison_run <- TRUE
+	value_differences <- map_dfr(seq_len(nrow(comparison_pairs)), function(i) {
+		original_variable <- comparison_pairs$original_variable[[i]]
+		copilot_variable <- comparison_pairs$copilot_variable[[i]]
+		pair_data <- full_join(
+			original |>
+				select(all_of(key), original_value = all_of(original_variable)),
+			copilot |>
+				select(all_of(key), copilot_value = all_of(copilot_variable)),
+			by = key
+		)
+		original_value <- pair_data$original_value
+		copilot_value <- pair_data$copilot_value
+		original_text <- as.character(original_value)
+		copilot_text <- as.character(copilot_value)
+		differs <- xor(is.na(original_text), is.na(copilot_text)) |
+			(!is.na(original_text) & !is.na(copilot_text) &
+				 original_text != copilot_text)
+
+		tibble(
+			iso = pair_data$iso[differs],
+			year = pair_data$year[differs],
+			comparison = comparison_pairs$comparison[[i]],
+			original_value = original_text[differs],
+			copilot_value = copilot_text[differs]
+		)
+	})
+
+	difference_summary <- value_differences |>
+		count(comparison, name = "country_years_different") |>
+		arrange(desc(country_years_different), comparison)
+
+	if (nrow(difference_summary) == 0) {
+		tibble(result = "All shared-variable values match for aligned keys.")
+	} else {
+		difference_summary
+	}
+} else {
+	tibble(result = paste(
+		"Value comparison skipped: at least one output has duplicate",
+		"country-year keys. Review key integrity above before joining."
+	))
+}
+```
+
+Show a small sample of differing values, if any.
+
+```{r}
+if (value_comparison_run && nrow(value_differences) > 0) {
+	value_differences |> slice_head(n = 20)
+} else if (value_comparison_run) {
+	tibble(result = "No differences to display.")
+} else {
+	tibble(result = "No value-level comparison was produced.")
+}
+```
+
+## Compare the conflict indicators directly
+
+The original `armed_conflict` is shifted forward one year during preparation,
+so compare it with the Copilot `armed_conflict_lag1` for the same country-year.
+The table reports agreement only among aligned records where both indicators
+are observed, and separately counts missing values.
+
+```{r}
+if (anyDuplicated(original[key]) == 0 && anyDuplicated(copilot[key]) == 0) {
+	conflict_comparison <- inner_join(
+		original |>
+			select(all_of(key), original_armed_conflict = armed_conflict),
+		copilot |>
+			select(all_of(key), copilot_armed_conflict_lag1 = armed_conflict_lag1),
+		by = key
+	)
+
+	conflict_observed <- conflict_comparison |>
+		filter(
+			!is.na(original_armed_conflict),
+			!is.na(copilot_armed_conflict_lag1)
+		)
+
+	conflict_summary <- tibble(
+		aligned_country_years = nrow(conflict_comparison),
+		observed_in_both = nrow(conflict_observed),
+		agreeing = sum(
+			conflict_observed$original_armed_conflict ==
+				conflict_observed$copilot_armed_conflict_lag1
+		),
+		disagreeing = sum(
+			conflict_observed$original_armed_conflict !=
+				conflict_observed$copilot_armed_conflict_lag1
+		),
+		missing_original = sum(is.na(conflict_comparison$original_armed_conflict)),
+		missing_copilot_lag1 = sum(
+			is.na(conflict_comparison$copilot_armed_conflict_lag1)
+		),
+		agreement_rate = if_else(
+			nrow(conflict_observed) > 0,
+			mean(
+				conflict_observed$original_armed_conflict ==
+					conflict_observed$copilot_armed_conflict_lag1
+			),
+			NA_real_
+		)
+	)
+
+	kable(conflict_summary, digits = 3)
+} else {
+	tibble(result = paste(
+		"Conflict indicator comparison skipped because country-year keys",
+		"are not unique in both outputs."
+	))
+}
+```
+
+The following table lists up to 20 aligned country-years where both indicators
+are observed but disagree.
+
+```{r}
+if (exists("conflict_observed")) {
+	conflict_observed |>
+		filter(
+			original_armed_conflict != copilot_armed_conflict_lag1
+		) |>
+		slice_head(n = 20)
+} else {
+	tibble(result = "No conflict-indicator comparison was produced.")
+}
+```
+
+## Interpretation notes
+
+The outputs do not use identical names or definitions for all measures, so a
+raw comparison of matching column names is not sufficient:
+
+- The original workflow shifts the conflict year forward by one and stores
+	that lagged indicator as `armed_conflict`. The Copilot workflow keeps the
+	same-year indicator as `armed_conflict` and adds
+	`armed_conflict_lag1`. Compare the original `armed_conflict` with
+	Copilot's `armed_conflict_lag1` to assess the corresponding lagged measure.
+- Disaster variables are named `drought` and `earthquake` in the original
+	output, versus `disaster_drought` and `disaster_earthquake` in the Copilot
+	output. These are not counted as shared columns above.
+- The original disaster preparation filters to 2000–2019. After merging, the
+	original workflow replaces missing `drought` and `earthquake` values with
+	zero; it also replaces unmatched `armed_conflict` values with zero. The
+	Copilot workflow does not apply the same disaster-year filter and replaces
+	unmatched conflict and disaster flags with zero.
+- The Copilot workflow can restrict records to ISO codes found in
+	`data/raw/countries.txt`; the original workflow does not apply this filter.
+
+Consequently, differences may reflect changed construction choices rather
+than accidental data errors. Interpret the value-difference tables alongside
+these definitions, especially for conflict timing and disaster indicators.
